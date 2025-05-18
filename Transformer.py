@@ -63,7 +63,7 @@ class MultiHeadAttention(nn.Module):
         score = q@k.transpose(2,3)/math.sqrt(n_d)
 
         if seq_mask is not None:
-            score = score.masked_fill(seq_mask, -1e9)
+            score = score.masked_fill(seq_mask == 0, -1e9)
 
         # 再应用 Padding Mask（遮挡填充符）
         if pad_mask is not None:
@@ -186,3 +186,28 @@ class Decoder(nn.Module):
             dec = layer(dec, enc, pad_mask, seq_mask, cross_pad_mask, cross_seq_mask)
         dec = self.fc(dec)
         return dec
+
+class Transfomer(nn.Module):
+    def __init__(self, src_pad_idx, trg_pad_idx, enc_vocal_size, dec_cocal_size, max_len,
+                        d_model, n_heads, hidden, n_layer, dropout, device):
+        super(Transfomer, self).__init__()
+
+        self.encoder = Encoder(enc_vocal_size, max_len, d_model, hidden, n_heads, n_layer, device, dropout)
+        self.decoder = Decoder(dec_cocal_size, max_len, d_model, hidden, n_heads, n_layer, device, dropout)
+        self.src_pad_idx = src_pad_idx
+        self.trg_pad_idx = trg_pad_idx
+        self.device = device
+
+    def make_pad_mask(self, q, k, pad_idx_q, pad_idx_k):
+        len_q, len_k = q.size(1), k.size(1)
+        q = q.ne(pad_idx_q).unsqueeze(1).unsqueeze(3)
+        q = q.repeat(1, 1, 1, len_k)
+        k = k.ne(pad_idx_k).unsqueeze(1).unsqueeze(2)
+        k = k.repeat(1, 1, len_q, 1)
+        mask = q & k
+        return mask
+
+    def make_seq_mask(self, q, k):
+        len_q, len_k = q.size(1), k.size(1)
+        mask = torch.tril(torch.ones(len_q, len_k), diagonal=0).bool().to(self.device)
+        return mask
