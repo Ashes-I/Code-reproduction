@@ -7,11 +7,12 @@ import torch.nn.functional as F
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class TokenEmbedding(nn.Embedding):
-    '''
+    """
     convert the input vocabulary into embedding of the specified dimension
     vocab_size: the size of vocabulary
     d_model: the dimension of the embedding
-    '''
+    """
+
     def __init__(self, vocab_size, d_model):
         super(TokenEmbedding, self).__init__(vocab_size, d_model,padding_idx=1)
 
@@ -73,3 +74,20 @@ class MultiHeadAttention(nn.Module):
         score = score.permute(0,2,1,3).contiguous().view(batch, seq_size, dimension)
         out = self.w_combine(score)
         return out
+
+
+class LayerNorm(nn.Module):
+    def __init__(self, d_model, eps=1e-12):
+        super(LayerNorm, self).__init__()
+
+        self.gamma = nn.Parameter(torch.ones(d_model))
+        self.beta = nn.Parameter(torch.zeros(d_model))
+        self.eps = eps
+
+    def forward(self, x):
+        mean = x.mean(-1, keepdim=True)
+        var = x.var(-1, unbiased=False, keepdim=True)
+        out = (x-mean) / torch.sqrt(var+self.eps)
+        out = out * self.gamma + self.beta
+        return out
+
