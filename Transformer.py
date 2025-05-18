@@ -104,9 +104,9 @@ class FeedForward(nn.Module):
         x = self.fc2(x)
         return x
 
-class EncodeLayer(nn.Module):
+class EncoderLayer(nn.Module):
     def __init__(self, d_model, hidden, n_head, dropout=0.1):
-        super(EncodeLayer, self).__init__()
+        super(EncoderLayer, self).__init__()
         self.attention = MultiHeadAttention(d_model, n_head)
         self.norm1 = LayerNorm(d_model)
         self.dropout1 = nn.Dropout(dropout)
@@ -125,12 +125,12 @@ class EncodeLayer(nn.Module):
         x = self.norm2(x+_x)
         return x
 
-class Encode(nn.Module):
+class Encoder(nn.Module):
     def __init__(self, vocal_size, max_len, d_model, hidden, n_head, n_encodelayer, device, dropout=0.1):
-        super(Encode, self).__init__()
+        super(Encoder, self).__init__()
         self.embedding = TransformerEmbedding(vocal_size, d_model, max_len, dropout, device)
         self.Encoder_layers = nn.ModuleList([
-                EncodeLayer(d_model, hidden, n_head, device)
+                EncoderLayer(d_model, hidden, n_head, device)
                 for _ in range(n_encodelayer)
         ])
 
@@ -139,3 +139,50 @@ class Encode(nn.Module):
         for layer in self.Encoder_layers:
             x = layer(x, pad_mask, seq_mask)
         return x
+
+class DecoderLayer(nn.Module):
+    def __init__(self, d_model, hidden, n_head, dropout):
+        super(DecoderLayer, self).__init__()
+        self.attention1 = MultiHeadAttention(d_model, n_head)
+        self.norm1 = LayerNorm(d_model)
+        self.dropout1 = nn.Dropout(dropout)
+        self.cross_attention = MultiHeadAttention(d_model, n_head)
+        self.norm2 = LayerNorm(d_model)
+        self.dropout2 = nn.Dropout(dropout)
+        self.ffn = FeedForward(d_model, hidden, dropout)
+        self.norm3 = LayerNorm(d_model)
+        self.dropout3 = nn.Dropout(dropout)
+    def forward(self, dec, enc, pad_mask, seq_mask, cross_pad_mask, cross_seq_mask):
+        """
+        dec: the output of embeeding in decoder part
+        enc: the output of encoder
+        """
+        _x = dec
+        x = self.attention1(dec, dec, dec, pad_mask, seq_mask)
+        x = self.dropout1(x)
+        x = self.norm1(x+_x)
+        _x = x
+        x = self.cross_attention(x, enc, enc, cross_pad_mask, cross_seq_mask)
+        x = self.dropout2(x)
+        x = self.norm2(x+_x)
+        _x = x
+        x = self.ffn(x)
+        x = self.dropout3(x)
+        x = self.norm3(x+_x)
+        return x
+
+class Decoder(nn.Module):
+    def __init__(self, vocal_size, max_len, d_model, hidden, n_head, n_decodelayer, device, dropout=0.1):
+        super(Decoder, self).__init__()
+        self.embedding = TransformerEmbedding(vocal_size, d_model, max_len, dropout, device)
+        self.Decoder_layers = nn.ModuleList([
+            DecoderLayer(d_model, hidden, n_head, device)
+            for _ in range(n_decodelayer)
+        ])
+        self.fc = nn.Linear(d_model, vocal_size)
+    def forward(self, dec, enc, pad_mask, seq_mask, cross_pad_mask, cross_seq_mask):
+        dec = self.embedding(dec)
+        for layer in self.Decoder_layers:
+            dec = layer(dec, enc, pad_mask, seq_mask, cross_pad_mask, cross_seq_mask)
+        dec = self.fc(dec)
+        return dec
