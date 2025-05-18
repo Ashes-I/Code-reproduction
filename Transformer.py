@@ -1,3 +1,5 @@
+import math
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -39,3 +41,35 @@ class TransformerEmbedding(nn.Module):
         pos_Emb = self.pos_Emb(x)
         return self.drop_out(token_Emb + pos_Emb)
 
+class MultiHeadAttention(nn.Module):
+    def __init__(self, d_model, n_head):
+        super(MultiHeadAttention, self).__init__()
+
+        self.n_head = n_head
+        self.d_model = d_model
+        self.w_q = nn.Linear(d_model, d_model)
+        self.w_k = nn.Linear(d_model, d_model)
+        self.w_v = nn.Linear(d_model, d_model)
+        self.w_combine = nn.Linear(d_model, d_model)
+        self.softmax = nn.Softmax(dim=-1)
+
+    def forward(self, q, k, v, pad_mask=None, seq_mask=None):
+        batch, seq_size, dimension = q.shape
+        n_d = self.d_model // self.n_head
+        q,k,v = self.w_q(q), self.w_k(k), self.w_v(v)
+        q = q.view(batch, seq_size, self.n_head, n_d).permute(0, 2, 1, 3)
+        k = k.view(batch, seq_size, self.n_head, n_d).permute(0, 2, 1, 3)
+        v = v.view(batch, seq_size, self.n_head, n_d).permute(0, 2, 1, 3)
+        score = q@k.transpose(2,3)/math.sqrt(n_d)
+
+        if seq_mask is not None:
+            score = score.masked_fill(seq_mask, -1e9)
+
+        # 再应用 Padding Mask（遮挡填充符）
+        if pad_mask is not None:
+            score = score.masked_fill(pad_mask == 0, -1e9)
+
+        score = self.softmax(score)@v
+        score = score.permute(0,2,1,3).contiguous().view(batch, seq_size, dimension)
+        out = self.w_combine(score)
+        return out
