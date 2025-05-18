@@ -1,5 +1,4 @@
 import math
-
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -88,6 +87,55 @@ class LayerNorm(nn.Module):
         mean = x.mean(-1, keepdim=True)
         var = x.var(-1, unbiased=False, keepdim=True)
         out = (x-mean) / torch.sqrt(var+self.eps)
-        out = out * self.gamma + self.beta
+        out = self.gamma * out + self.beta
         return out
 
+class FeedForward(nn.Module):
+    def __init__(self, d_model, hidden, dropout=0.1):
+        super(FeedForward, self).__init__()
+        self.fc1 = nn.Linear(d_model, hidden)
+        self.fc2 = nn.Linear(hidden, d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = F.relu(x)
+        x = self.dropout(x)
+        x = self.fc2(x)
+        return x
+
+class EncodeLayer(nn.Module):
+    def __init__(self, d_model, hidden, n_head, dropout=0.1):
+        super(EncodeLayer, self).__init__()
+        self.attention = MultiHeadAttention(d_model, n_head)
+        self.norm1 = LayerNorm(d_model)
+        self.dropout1 = nn.Dropout(dropout)
+        self.ffn = FeedForward(d_model, hidden, dropout)
+        self.norm2 = LayerNorm(d_model)
+        self.dropout2 = nn.Dropout(dropout)
+
+    def forward(self, x, pad_mask=None, seq_mask=None):
+        _x = x
+        x = self.attention(x, x, x, pad_mask, seq_mask)
+        x = self.dropout1(x)
+        x = self.norm1(x+_x)
+        _x = x
+        x = self.ffn(x)
+        x = self.dropout2(x)
+        x = self.norm2(x+_x)
+        return x
+
+class Encode(nn.Module):
+    def __init__(self, vocal_size, max_len, d_model, hidden, n_head, n_encodelayer, device, dropout=0.1):
+        super(Encode, self).__init__()
+        self.embedding = TransformerEmbedding(vocal_size, d_model, max_len, dropout, device)
+        self.Encoder_layers = nn.ModuleList([
+                EncodeLayer(d_model, hidden, n_head, device)
+                for _ in range(n_encodelayer)
+        ])
+
+    def forward(self, x, pad_mask, seq_mask):
+        x = self.embedding(x)
+        for layer in self.Encoder_layers:
+            x = layer(x, pad_mask, seq_mask)
+        return x
