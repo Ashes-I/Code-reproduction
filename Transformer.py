@@ -53,7 +53,7 @@ class MultiHeadAttention(nn.Module):
         self.w_combine = nn.Linear(d_model, d_model)
         self.softmax = nn.Softmax(dim=-1)
 
-    def forward(self, q, k, v, pad_mask=None, seq_mask=None):
+    def forward(self, q, k, v, pad_mask=None):
         batch, seq_size, dimension = q.shape
         n_d = self.d_model // self.n_head
         q,k,v = self.w_q(q), self.w_k(k), self.w_v(v)
@@ -62,10 +62,6 @@ class MultiHeadAttention(nn.Module):
         v = v.view(batch, seq_size, self.n_head, n_d).permute(0, 2, 1, 3)
         score = q@k.transpose(2,3)/math.sqrt(n_d)
 
-        if seq_mask is not None:
-            score = score.masked_fill(seq_mask == 0, -1e9)
-
-        # 再应用 Padding Mask（遮挡填充符）
         if pad_mask is not None:
             score = score.masked_fill(pad_mask == 0, -1e9)
 
@@ -114,9 +110,9 @@ class EncoderLayer(nn.Module):
         self.norm2 = LayerNorm(d_model)
         self.dropout2 = nn.Dropout(dropout)
 
-    def forward(self, x, pad_mask=None, seq_mask=None):
+    def forward(self, x, pad_mask=None):
         _x = x
-        x = self.attention(x, x, x, pad_mask, seq_mask)
+        x = self.attention(x, x, x, pad_mask)
         x = self.dropout1(x)
         x = self.norm1(x+_x)
         _x = x
@@ -134,10 +130,10 @@ class Encoder(nn.Module):
                 for _ in range(n_encodelayer)
         ])
 
-    def forward(self, x, pad_mask, seq_mask):
+    def forward(self, x, pad_mask):
         x = self.embedding(x)
         for layer in self.Encoder_layers:
-            x = layer(x, pad_mask, seq_mask)
+            x = layer(x, pad_mask)
         return x
 
 class DecoderLayer(nn.Module):
@@ -152,17 +148,17 @@ class DecoderLayer(nn.Module):
         self.ffn = FeedForward(d_model, hidden, dropout)
         self.norm3 = LayerNorm(d_model)
         self.dropout3 = nn.Dropout(dropout)
-    def forward(self, dec, enc, pad_mask, seq_mask, cross_pad_mask, cross_seq_mask):
+    def forward(self, dec, enc, pad_mask, cross_pad_mask):
         """
         dec: the output of embeeding in decoder part
         enc: the output of encoder
         """
         _x = dec
-        x = self.attention1(dec, dec, dec, pad_mask, seq_mask)
+        x = self.attention1(dec, dec, dec, pad_mask)
         x = self.dropout1(x)
         x = self.norm1(x+_x)
         _x = x
-        x = self.cross_attention(x, enc, enc, cross_pad_mask, cross_seq_mask)
+        x = self.cross_attention(x, enc, enc, cross_pad_mask)
         x = self.dropout2(x)
         x = self.norm2(x+_x)
         _x = x
@@ -180,10 +176,10 @@ class Decoder(nn.Module):
             for _ in range(n_decodelayer)
         ])
         self.fc = nn.Linear(d_model, vocal_size)
-    def forward(self, dec, enc, pad_mask, seq_mask, cross_pad_mask, cross_seq_mask):
+    def forward(self, dec, enc, pad_mask, cross_pad_mask):
         dec = self.embedding(dec)
         for layer in self.Decoder_layers:
-            dec = layer(dec, enc, pad_mask, seq_mask, cross_pad_mask, cross_seq_mask)
+            dec = layer(dec, enc, pad_mask, cross_pad_mask)
         dec = self.fc(dec)
         return dec
 
@@ -210,4 +206,13 @@ class Transfomer(nn.Module):
     def make_seq_mask(self, q, k):
         len_q, len_k = q.size(1), k.size(1)
         mask = torch.tril(torch.ones(len_q, len_k), diagonal=0).bool().to(self.device)
+        mask.unsqueeze(0).unsqueeze(0)
         return mask
+
+    def forward(self, src, trg):
+        src_mask = self.make_pad_mask(src, src, self.src_pad_idx, self.src_pad_idx)
+        trg_mask = self.make_pad_mask(trg, trg, self.trg_pad_idx, self.trg_pad_idx) \
+                   * self.make_seq_mask(trg, trg)
+        enc = self.encoder(src, src_mask)
+        out = self.decoder(trg, src, trg_mask, src_mask)
+        return out
